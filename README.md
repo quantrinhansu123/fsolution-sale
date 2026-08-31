@@ -1,20 +1,17 @@
 # F-Solution — CRM/ERP cho công ty phần mềm
 
 CRM/ERP nội bộ cho **F-Solution** — công ty phần mềm/CNTT bán sản phẩm theo **gói thuê bao**
-(fork từ dự án `sango-sannhua`, đổi domain sang SaaS: bỏ 4 phân hệ Kho/Tồn kho/Vận đơn/Nhập-xuất,
-đổi "Đơn hàng" → "Hợp đồng", đơn vị tính sản phẩm là gói tháng, theme xanh dương). Chạy thật trên
-Postgres portable, khớp `docs/api-contract.openapi.yaml`, theo `docs/design-system/MASTER.md`.
+Chạy thật trên Postgres portable, khớp `docs/api-contract.openapi.yaml`, theo `docs/design-system/MASTER.md`.
 
-Vì `projects/` giờ có **nhiều hơn một dự án** (`faha`, `fsolution`), mọi lệnh `npm run bridge`
-đều phải kèm `--project=fsolution` (tool không còn tự suy ra được).
+Mọi lệnh `npm run bridge` đều phải kèm `--project=fsolution` (tool không còn tự suy ra được).
 
-## Cổng dùng (khác `faha` để chạy song song được nếu cần)
+## Cổng dùng
 
-| | faha | fsolution |
+| |  | fsolution |
 | :-- | :-- | :-- |
-| Backend | 3000 | **3003** |
-| Frontend | 5173 | **5176** |
-| Postgres portable | 5433 | **5436** |
+| Backend |  | **3003** |
+| Frontend |  | **5176** |
+| Postgres portable |  | **5436** |
 
 ## Chạy dev cục bộ
 
@@ -90,18 +87,12 @@ Admin có thể cấp thêm quyền cho các tài khoản khác ở màn "Phân 
 
 ## Trạng thái hiện tại
 
-- **Fork từ `sango-sannhua`** (Phase 3, commit `27fdc7e74`) — **đổi domain sang công ty phần mềm/SaaS**:
-  - **Bỏ 4 phân hệ**: Tồn kho, Vận đơn, Kho hàng, Nhập/Xuất/Điều chỉnh (module backend + trang FE +
-    route + nav + e2e đã gỡ). `GET /shipments`, `/warehouses`, `/inventory`, `/inventory-transactions` → 404.
-  - "Đơn hàng" → **"Hợp đồng"** (nhãn UI + message service). Đơn vị tính sản phẩm = gói thuê bao
-    (`gói`, `gói hàng tháng`, `gói 3/6/12/18/24 tháng`). Theme `amber` → **xanh dương `#2563EB`**.
-    Logo + màn đăng nhập/Layout/HomePage viết lại theo brand **F-Solution**.
 - Backend còn lại: `GET /health`; `leads` (+`GET /leads/:id/logs`); `orders`/hợp đồng (+`items`);
   `customers`; `sale-reports` (+`/auto`); `campaigns`; `marketing-reports` (+`/auto`); `cskh-logs`;
   `products` (+`product-performance`); `feedbacks`; `payments`; `cash-accounts`; `cash-transactions`;
   `employees`; `kpis`; `system-configs`; `audit-logs` (admin); `dashboard/overview` (admin, 7 biểu đồ);
   `auth` (`login`/`me`/`change-password`); `accounts` + `accounts/:id/permissions`. Prisma + PostgreSQL portable.
-- **Test: 116 unit + 62 e2e (backend) + 37 (frontend) pass.** `tsc --noEmit` sạch cả 2 app,
+- **Test: 116 unit + 62 e2e (backend) + 37 (frontend) pass.** `tsc --noEmit` sạch tất cả app,
   `vite build` OK, 11/11 migration. Xem `docs/releases/2026-08-31-khoi-tao-fsolution.md` để biết
   chi tiết `/build` + `/review` + các lỗi đã sửa.
 - Docker: Dockerfile + `infra/docker-compose.yml` + `infra/vps-deploy/` kế thừa từ `sango-sannhua`
