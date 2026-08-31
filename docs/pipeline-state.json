@@ -1,0 +1,21 @@
+{
+  "updatedAt": "2026-08-31T16:58:21.019Z",
+  "build": {
+    "lastRunAt": null
+  },
+  "test": {
+    "status": "pass",
+    "at": "2026-08-31T16:52:28.982Z",
+    "summary": "backend=pass, frontend=pass"
+  },
+  "review": {
+    "status": "pass",
+    "at": "2026-08-31T16:58:21.019Z",
+    "criticalOrHighCount": 0,
+    "notes": "fork fsolution: /build don nhat quan (ProductUnit type, xoa 4 module logistics khoi apiClient/AccountsPage/e2e, doi cong 3003/5176/5436, port 3 fix tu sango-sannhua Phien 35-36, sua 12 test frontend, jest maxWorkers:1, rebrand F-Solution) + /review (orders/cskh-logs service chi doi text, khong loi logic moi). 116 unit + 62 e2e + 37 frontend pass."
+  },
+  "ship": {
+    "status": "done",
+    "at": "2026-08-24T21:46:14.377Z"
+  }
+}

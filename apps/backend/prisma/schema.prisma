@@ -1,0 +1,317 @@
+// prisma/schema.prisma là nguồn sự thật duy nhất cho schema PostgreSQL (Supabase hoặc VPS tự host).
+// Field trong mỗi model khớp 1-1 với docs/api-contract.openapi.yaml.
+
+generator client {
+  provider = "prisma-client-js"
+  // Output riêng cho dự án này — tránh bị ghi đè bởi `prisma generate` của dự án khác
+  // trong cùng monorepo (mọi dự án cùng khai `@prisma/client` nên npm workspaces hoist
+  // về một bản chung ở node_modules gốc theo mặc định).
+  output   = "../node_modules/@prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Lead {
+  id              String    @id @default(uuid())
+  code            String?   @unique // Mới (Phase 3) — mã Lead 4 ký tự [A-Z0-9], server-generated
+  name            String
+  phone           String
+  source          String
+  productInterest String? // Mới (Phase 3) — Sản phẩm khách hàng quan tâm
+  threadId        String? // Mới (Phase 3) — Mã hội thoại Pancake/Zalo/Messenger
+  status          String    @default("new")
+  assignedTo String? // Mới (Phase 2) — Sale phụ trách (id Employee, chưa có FK vì Employee tạo ở Giai đoạn 9)
+  sourcedBy  String? // Mới — Nhân viên Marketing tạo/nguồn Lead này (id Employee role=MKT), tự động round-robin như assignedTo, dùng cho Dashboard doanh thu Marketing
+  score      Float? // Mới (Phase 2)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  logs       LeadLog[]
+}
+
+// Mới (Phase 2, Giai đoạn 4) — append-only, tự ghi khi PATCH /leads/{id} đổi status
+// Mới (Phase 3): mở rộng để ghi được cả khi đổi assignedTo (không chỉ status) — xem fieldChanged
+model LeadLog {
+  id           String   @id @default(uuid())
+  leadId       String
+  lead         Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  fromStatus   String?
+  toStatus     String? // Mới (Phase 3) — nới lỏng sang nullable, null khi log này chỉ ghi đổi assignedTo
+  fieldChanged String? // Mới (Phase 3) — "status" | "assignedTo"
+  oldValue     String? // Mới (Phase 3) — dùng khi fieldChanged=assignedTo
+  newValue     String? // Mới (Phase 3) — dùng khi fieldChanged=assignedTo
+  note         String?
+  changedBy    String?
+  createdAt    DateTime @default(now())
+}
+
+model Order {
+  id              String      @id @default(uuid())
+  customerId      String
+  leadId          String? // Mới (Phase 3) — Lead phát sinh đơn này, tham chiếu lỏng (không FK cứng)
+  assignedTo      String? // Mới (Phase 3) — Sale phụ trách đơn này (id Employee)
+  shippingAddress String? // Mới (Phase 3)
+  shippingPhone   String? // Mới (Phase 3)
+  note            String? // Mới (Phase 3)
+  totalAmount     Float
+  status          String      @default("pending")
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  items           OrderItem[]
+}
+
+// Mới (Phase 2, Giai đoạn 4) — giải quyết bài toán combo nhiều sản phẩm + quà tặng trong 1 đơn
+model OrderItem {
+  id              String   @id @default(uuid())
+  orderId         String
+  order           Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId       String // chưa có FK — model Product tạo ở Giai đoạn 7
+  productName     String
+  unit            String? // Mới — Đơn vị tính, sao chép từ Product tại thời điểm tạo đơn
+  quantity        Int
+  unitPrice       Float
+  discountPercent Float? // Mới (Phase 3) — % Khuyến mại
+  isGift      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+}
+
+// Mới (Phase 2, Giai đoạn 4) — dữ liệu báo cáo Sale nhập tay, KHÔNG phải nguồn sự thật
+// (nguyên tắc #4, xem implementation_plan.md) — chỉ để đối chiếu, không dùng tính doanh thu thật.
+model SaleReport {
+  id               String   @id @default(uuid())
+  employeeId       String // chưa có FK — model Employee tạo ở Giai đoạn 9
+  date             DateTime @db.Date
+  shift            String
+  product          String
+  market           String
+  messageCount     Int
+  orderCount       Int
+  revenueActual    Float
+  orderCancelCount Int      @default(0)
+  newCustomerCount Int      @default(0)
+  oldCustomerCount Int      @default(0)
+  createdAt        DateTime @default(now())
+}
+
+// Mới (Phase 2, Giai đoạn 4) — chuẩn hoá khách hàng, tránh trùng lặp (phone unique)
+model Customer {
+  id              String   @id @default(uuid())
+  name            String
+  phone           String   @unique
+  address         String?
+  city            String?
+  country         String?
+  customerType    String   @default("new")
+  blacklistStatus Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// Mới (Phase 2, Giai đoạn 5)
+model Campaign {
+  id        String   @id @default(uuid())
+  name      String
+  budget    Float
+  market    String?
+  product   String?
+  status    String   @default("active")
+  createdAt DateTime @default(now())
+}
+
+// Mới (Phase 2, Giai đoạn 5) — dữ liệu báo cáo MKT nhập tay, KHÔNG phải nguồn sự thật (nguyên tắc #4)
+model MarketingReport {
+  id            String   @id @default(uuid())
+  campaignId    String?
+  date          DateTime @db.Date
+  shift         String
+  product       String
+  market        String
+  team          String
+  adCost        Float
+  messageCount  Int
+  orderCount    Int
+  revenue       Float
+  revenueActual Float
+  warning       String?
+  createdAt     DateTime @default(now())
+}
+
+
+
+// Mới (Phase 2, Giai đoạn 7) — CSKH: ghi nhận cuộc gọi/chăm sóc sau bán, upsell/cross-sell.
+// orderId/customerId không FK — log hoạt động tham chiếu lỏng, cùng kiểu SaleReport/MarketingReport
+// (nguyên tắc #4, xem implementation_plan.md), tránh phụ thuộc cứng vào Order/Customer.
+model CskhLog {
+  id         String   @id @default(uuid())
+  orderId    String
+  customerId String
+  staffId    String? // chưa có FK — model Employee tạo ở Giai đoạn 9
+  status     String // vd: called/upsell/cross_sell/no_answer
+  note       String?
+  createdAt  DateTime @default(now())
+}
+
+// Mới (Phase 2, Giai đoạn 7) — danh mục sản phẩm, nguồn dropdown dùng chung toàn hệ thống (nguyên tắc #2)
+model Product {
+  id          String               @id @default(uuid())
+  name        String
+  sku         String               @unique
+  unit        String               @default("cái") // vd: m2, m, thanh, tấm, cái, thùng, kg, lô, chuyến, gói
+  price       Float
+  category    String? // vd: san-go, san-nhua, phu-kien
+  createdAt   DateTime             @default(now())
+  performance ProductPerformance[]
+}
+
+// Mới (Phase 2, Giai đoạn 7) — hiệu quả test sản phẩm R&D theo từng giai đoạn (win/fail/pending)
+model ProductPerformance {
+  id              String   @id @default(uuid())
+  productId       String
+  product         Product  @relation(fields: [productId], references: [id])
+  stage           String // Giai đoạn test, vd GĐ1
+  messageCount    Int?
+  adCost          Float?
+  orderCount      Int?
+  revenue         Float?
+  adCostRatio     Float?
+  conversionRate  Float?
+  paymentRate     Float?
+  evaluation      String   @default("pending") // win | fail | pending
+  createdAt       DateTime @default(now())
+}
+
+// Mới (Phase 2, Giai đoạn 7) — phản hồi khách hàng tổng hợp từ MKT/Sale/CSKH cho R&D.
+// customerId/orderId không FK — cùng lý do CskhLog ở trên (dữ liệu tổng hợp/log lỏng).
+model Feedback {
+  id         String   @id @default(uuid())
+  customerId String
+  orderId    String?
+  source     String // MKT | Sale | CSKH
+  content    String
+  rating     Int
+  createdAt  DateTime @default(now())
+}
+
+// Mới (Phase 2, Giai đoạn 8) — thu tiền theo hợp đồng, đối soát bill.
+// orderId không FK — cùng lý do Shipment.orderId (nguyên tắc #4, dữ liệu vận hành top-level,
+// không phải sub-resource composition của Order).
+model Payment {
+  id           String    @id @default(uuid())
+  orderId      String
+  amount       Float
+  status       String    @default("pending") // pending | completed | failed
+  method       String?
+  feeBreakdown Json?
+  reconciledAt DateTime?
+  createdAt    DateTime  @default(now())
+}
+
+// Mới (Phase 2, Giai đoạn 8) — danh mục mã tài khoản Thu/Chi, dropdown do Admin khai báo (nguyên tắc #2)
+model CashAccount {
+  id               String            @id @default(uuid())
+  code             String            @unique
+  name             String
+  type             String // income | expense
+  branch           String?
+  market           String?
+  active           Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  cashTransactions CashTransaction[]
+}
+
+// Mới (Phase 2, Giai đoạn 8) — Sổ quỹ, gộp "Quản lý Thu" + "Quản lý Chi" thành 1 resource
+// phân biệt qua `type` (xem Quyết định thiết kế, implementation_plan.md)
+model CashTransaction {
+  id              String      @id @default(uuid())
+  cashAccountId   String
+  cashAccount     CashAccount @relation(fields: [cashAccountId], references: [id])
+  type            String // income | expense
+  branch          String?
+  market          String?
+  content         String
+  amount          Float
+  source          String?
+  evidenceUrl     String?
+  transactionDate DateTime    @db.Date
+  createdAt       DateTime    @default(now())
+}
+
+// Mới (Phase 2, Giai đoạn 9) — hồ sơ nhân sự (nghiệp vụ), KHÁC Account (đăng nhập kỹ thuật).
+// accountId liên kết tuỳ chọn tới Account để đăng nhập.
+model Employee {
+  id        String   @id @default(uuid())
+  name      String
+  email     String   @unique
+  team      String?
+  branch    String?
+  role      String // MKT | Sale | CS | CSKH | KeToan | Admin
+  status    String   @default("active") // active | inactive
+  accountId String?  @unique
+  account   Account? @relation(fields: [accountId], references: [id])
+  createdAt DateTime @default(now())
+  kpis      KPI[]
+}
+
+// Mới (Phase 2, Giai đoạn 9) — chỉ số hiệu suất nhân sự theo kỳ
+model KPI {
+  id         String   @id @default(uuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id])
+  period     String // vd 2026-08
+  score      Float
+  bonus      Float?
+  createdAt  DateTime @default(now())
+}
+
+// Mới (Phase 2, Giai đoạn 9) — cấu hình hệ thống, dropdown do Admin khai báo (nguyên tắc #2).
+// Không có endpoint tạo qua API công khai (chỉ GET + PATCH theo key) — seed giá trị mặc định ở
+// tầng Service lúc khởi động (idempotent), xem SystemConfigService.
+model SystemConfig {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  value       String
+  description String?
+  updatedAt   DateTime @updatedAt
+}
+
+// Mới (Phase 2, Giai đoạn 9) — nhật ký thay đổi dữ liệu toàn hệ thống (nguyên tắc #5), chỉ đọc,
+// tự sinh ở tầng Service khi có thay đổi dữ liệu quan trọng — không có endpoint tạo qua API công khai.
+// tableName/recordId tham chiếu động tới nhiều bảng khác nhau nên không dùng FK cứng.
+model AuditLog {
+  id           String   @id @default(uuid())
+  tableName    String
+  recordId     String
+  fieldChanged String?
+  oldValue     String?
+  newValue     String?
+  changedBy    String?
+  createdAt    DateTime @default(now())
+}
+
+// Baseline đăng nhập + phân quyền — có sẵn cho mọi dự án, xem
+// skills/build/auth-and-permissions/SKILL.md. KHÔNG xoá/reset qua prisma/seed.ts
+// (demo data) — chỉ seed qua prisma/seed-accounts.ts (idempotent, dùng upsert).
+model Account {
+  id           String       @id @default(uuid())
+  username     String       @unique
+  passwordHash String
+  isAdmin      Boolean      @default(false)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  permissions  Permission[]
+  employee     Employee?
+}
+
+model Permission {
+  id        String  @id @default(uuid())
+  accountId String
+  account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  module    String
+  canView   Boolean @default(false)
+  canEdit   Boolean @default(false)
+  canDelete Boolean @default(false)
+
+  @@unique([accountId, module])
+}
