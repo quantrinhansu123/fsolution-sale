@@ -145,16 +145,13 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
   return (
     <div className="flex flex-col h-full">
       {/* ── Logo & Brand ── */}
-      <div className="flex items-center gap-3 px-4 py-5 border-b border-blue-100">
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-blue-100">
         <img
           src="/logo.png"
           alt="F-Solution logo"
-          className="w-9 h-9 object-contain shrink-0 drop-shadow-sm"
+          className="w-7 h-7 object-contain shrink-0 drop-shadow-sm"
         />
-        <div className="min-w-0">
-          <p className="text-blue-900 text-sm font-bold truncate">F-Solution</p>
-          <p className="text-blue-400 text-xs truncate">CRM / ERP Platform</p>
-        </div>
+        <p className="text-blue-900 text-sm font-bold truncate">F-Solution</p>
       </div>
 
       {/* ── Navigation ── */}
@@ -236,12 +233,12 @@ export default function Layout() {
 
       {/* ── Main Content ── */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        {/* ── Top Header ── */}
-        <header className="bg-white border-b border-blue-50 px-4 md:px-6 h-14 flex items-center gap-4 shrink-0 shadow-sm">
-          {/* Hamburger (mobile) */}
+        {/* ── Top Header (chỉ mobile — desktop dùng sidebar trái) ── */}
+        <header className="md:hidden bg-white border-b border-blue-50 px-4 h-14 flex items-center gap-4 shrink-0 shadow-sm">
+          {/* Hamburger */}
           <button
             type="button"
-            className="md:hidden p-1.5 rounded-lg text-gray-500 hover:text-blue-700 hover:bg-blue-50 cursor-pointer"
+            className="p-1.5 rounded-lg text-gray-500 hover:text-blue-700 hover:bg-blue-50 cursor-pointer"
             onClick={() => setMobileOpen(true)}
             aria-label="Mở menu"
           >
@@ -249,17 +246,9 @@ export default function Layout() {
           </button>
 
           {/* Mobile Brand */}
-          <div className="md:hidden flex items-center gap-2">
+          <div className="flex items-center gap-2">
             <img src="/logo.png" alt="F-Solution" className="w-7 h-7 object-contain" />
             <span className="text-sm font-bold text-blue-900">F-Solution</span>
-          </div>
-
-          <div className="flex-1" />
-
-          {/* Status indicator */}
-          <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 rounded-full border border-emerald-100">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-xs font-medium text-emerald-700">Online</span>
           </div>
         </header>
 
