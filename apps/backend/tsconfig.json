@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.json",
+  "ts-node": {
+    "transpileOnly": true
+  },
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "baseUrl": ".",
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "paths": {
+      "@shared/*": ["../../packages/shared-types/src/*"]
+    }
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "test"]
+}

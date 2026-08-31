@@ -1,0 +1,51 @@
+version: "3.9"
+
+# VPS production stack. Build context is the project root (one level up from this file), matching
+# apps/backend/Dockerfile and apps/frontend/Dockerfile. Secrets (POSTGRES_PASSWORD, JWT_SECRET) come
+# from a .env file next to this compose file — see infra/vps-deploy/README.md.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: fsolution
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ..
+      dockerfile: apps/backend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3003
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/fsolution?schema=public
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET phai duoc dat trong .env truoc khi len production}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost}
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: apps/frontend/Dockerfile
+      args:
+        VITE_API_BASE_URL: /api/v1
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+
+volumes:
+  postgres-data:

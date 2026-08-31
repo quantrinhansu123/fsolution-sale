@@ -1,0 +1,1740 @@
+openapi: 3.0.3
+info:
+  title: F-Solution API
+  version: "1.0.0"
+  description: >
+    Hợp đồng REST API dùng chung cho apps/backend (NestJS) và apps/frontend (React).
+    Đây là nguồn sự thật contract-first — mọi endpoint mới phải được thêm ở đây
+    trước khi Claude Code CLI viết code trong /build.
+servers:
+  - url: /api/v1
+paths:
+  # ============================================================
+  # Phase 1 — ĐÃ BUILD/TEST/SHIP THẬT. Không sửa path/schema hiện có ở đây,
+  # chỉ được bổ sung endpoint/field MỚI (additive). Xem docs/implementation_plan.md
+  # mục "Quyết định thiết kế".
+  # ============================================================
+  /health:
+    get:
+      operationId: getHealth
+      summary: Health check của backend
+      tags: [system]
+      security: []
+      responses:
+        "200":
+          description: Backend đang hoạt động
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthCheckResponse"
+  /leads:
+    get:
+      operationId: getLeads
+      summary: >
+        Lấy danh sách khách hàng tiềm năng. Mới (Phase 3): nếu tài khoản đăng nhập link tới 1
+        Employee role=Sale (không phải admin), tự động chỉ trả về Lead có assignedTo=chính Sale đó
+        (row-level filter, không cần truyền query param nào) — tài khoản khác (admin/module) thấy
+        toàn bộ như cũ.
+      tags: [CRM]
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema: { type: string, enum: [new, contacted, qualified, converted, lost] }
+          description: "Mới (Phase 3) — lọc theo trạng thái, dùng để đổ dropdown 'Chọn mã Lead' (status=converted)"
+        - name: assignedTo
+          in: query
+          required: false
+          schema: { type: string }
+          description: >
+            Mới (Phase 3) — truyền 'me' để lọc theo chính Sale đang đăng nhập, hoặc truyền thẳng
+            employeeId. LƯU Ý bảo mật: nếu tài khoản gọi API là Sale bị giới hạn (không phải admin),
+            giá trị này bị BỎ QUA hoàn toàn — server luôn ép về đúng chính họ, không thể ghi đè để
+            xem Lead của Sale khác. Chỉ có tác dụng lọc tự do với admin/tài khoản không bị giới hạn.
+      responses:
+        "200":
+          description: Lấy danh sách thành công
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Lead"
+    post:
+      operationId: createLead
+      summary: Tạo lead mới
+      tags: [CRM]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateLeadInput"
+      responses:
+        "201":
+          description: Tạo thành công
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Lead"
+  /leads/{id}:
+    patch:
+      operationId: updateLead
+      summary: Cập nhật trạng thái/phân bổ Sale cho lead (mới — Phase 2)
+      tags: [CRM]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateLeadInput" }
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/Lead" } } }
+  /leads/{id}/logs:
+    get:
+      operationId: getLeadLogs
+      summary: Lịch sử thay đổi trạng thái của 1 lead (mới — Phase 2, chỉ đọc, tự sinh khi PATCH /leads/{id})
+      tags: [CRM]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/LeadLog" } } } }
+  /orders:
+    get:
+      operationId: getOrders
+      summary: >
+        Lấy danh sách hợp đồng (response nhúng kèm items[] — mới Phase 3, tránh phải gọi thêm
+        GET /orders/{id}/items cho từng dòng). Mới (Phase 3): nếu tài khoản đăng nhập link tới 1
+        Employee role=Sale (không phải admin), tự động chỉ trả về Order có assignedTo=chính Sale đó.
+      tags: [Sales]
+      parameters:
+        - name: assignedTo
+          in: query
+          required: false
+          schema: { type: string }
+          description: >
+            Mới (Phase 3) — truyền 'me' để lọc theo chính Sale đang đăng nhập, hoặc truyền thẳng
+            employeeId. LƯU Ý bảo mật: nếu tài khoản gọi API là Sale bị giới hạn (không phải admin),
+            giá trị này bị BỎ QUA hoàn toàn — server luôn ép về đúng chính họ, không thể ghi đè để
+            xem Order của Sale khác. Chỉ có tác dụng lọc tự do với admin/tài khoản không bị giới hạn.
+      responses:
+        "200":
+          description: Lấy danh sách thành công
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Order"
+    post:
+      operationId: createOrder
+      summary: >
+        Tạo hợp đồng mới. Mới (Phase 3): nhận trực tiếp thông tin khách hàng + 1 sản phẩm (thay vì
+        chỉ customerId) — Service tự upsert Customer theo shippingPhone (chưa tồn tại → tạo mới
+        customerType=new; đã tồn tại → cập nhật customerType=old) và tạo kèm 1 OrderItem, cùng
+        1 $transaction. customerId (cũ) vẫn nhận được để tương thích ngược, nhưng FE nên dùng bộ
+        field mới bên dưới.
+      tags: [Sales]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOrderInput"
+      responses:
+        "201":
+          description: Tạo thành công
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "400":
+          description: >
+            Thiếu customerId lẫn customerName+shippingPhone; hoặc leadId không tồn tại/chưa
+            status=converted/không thuộc chính Sale đang gọi API (mới Phase 3)
+  /orders/{id}:
+    patch:
+      operationId: updateOrder
+      summary: Cập nhật trạng thái hợp đồng (mới — Phase 2; khoá sửa sau khi status=delivered theo nguyên tắc #6)
+      tags: [Sales]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateOrderInput" }
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/Order" } } }
+        "409": { description: "Đơn đã ở trạng thái khoá (delivered/cancelled), không cho sửa" }
+  /orders/{id}/items:
+    get:
+      operationId: getOrderItems
+      summary: Danh sách sản phẩm/quà tặng trong 1 hợp đồng (mới — Phase 2, giải quyết bài toán combo/quà tặng)
+      tags: [Sales]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/OrderItem" } } } }
+    post:
+      operationId: addOrderItem
+      summary: Thêm sản phẩm/quà tặng vào hợp đồng
+      tags: [Sales]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateOrderItemInput" }
+      responses:
+        "201":
+          description: Tạo thành công
+          content: { application/json: { schema: { $ref: "#/components/schemas/OrderItem" } } }
+  /inventory:
+    get:
+      operationId: getInventory
+      summary: Lấy tồn kho thực tế
+      tags: [Logistics]
+      responses:
+        "200":
+          description: Thành công
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Inventory"
+  /auth/login:
+    post:
+      operationId: login
+      summary: Đăng nhập
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginInput" }
+      responses:
+        "200":
+          description: Đăng nhập thành công
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthSession" }
+        "401": { description: Sai tài khoản hoặc mật khẩu }
+  /auth/me:
+    get:
+      operationId: getMe
+      summary: Thông tin tài khoản đang đăng nhập + quyền
+      tags: [auth]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountProfile" }
+  /auth/change-password:
+    patch:
+      operationId: changePassword
+      summary: Tự đổi mật khẩu (tài khoản đang đăng nhập)
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChangePasswordInput" }
+      responses:
+        "200": { description: Đổi mật khẩu thành công }
+        "401": { description: Mật khẩu cũ không đúng }
+  /accounts:
+    get:
+      operationId: listAccounts
+      summary: Danh sách tài khoản
+      tags: [account-management]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/AccountProfile" } }
+    post:
+      operationId: createAccount
+      summary: Tạo tài khoản mới
+      tags: [account-management]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateAccountInput" }
+      responses:
+        "201":
+          description: Tạo thành công
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountProfile" }
+  /accounts/{id}:
+    patch:
+      operationId: updateAccount
+      summary: Sửa tài khoản (đổi tên hiển thị, reset mật khẩu)
+      tags: [account-management]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateAccountInput" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccountProfile" }
+    delete:
+      operationId: deleteAccount
+      summary: Xoá tài khoản
+      tags: [account-management]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "204": { description: Đã xoá }
+        "409": { description: Không thể xoá tài khoản admin cuối cùng }
+  /accounts/{id}/permissions:
+    get:
+      operationId: getAccountPermissions
+      summary: Xem ma trận quyền của 1 tài khoản
+      tags: [account-management]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Permission" } }
+    put:
+      operationId: setAccountPermissions
+      summary: Cập nhật ma trận quyền của 1 tài khoản
+      tags: [account-management]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: array, items: { $ref: "#/components/schemas/PermissionInput" } }
+      responses:
+        "200": { description: OK }
+
+  # ============================================================
+  # Phase 2 — MỚI, theo MÔ TẢ NGHIỆP VỤ CỤ THỂ.pdf (V3.0). Xem
+  # docs/implementation_plan.md mục "Danh sách entity mới (Phase 2)" cho lý do
+  # thiết kế và bảng ánh xạ module permission.
+  # ============================================================
+  /campaigns:
+    get:
+      operationId: getCampaigns
+      summary: Lấy danh sách chiến dịch Marketing
+      tags: [MKT]
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Campaign" } } } }
+    post:
+      operationId: createCampaign
+      summary: Tạo chiến dịch
+      tags: [MKT]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateCampaignInput" } } }
+      responses:
+        "201":
+          description: Created
+          content: { application/json: { schema: { $ref: "#/components/schemas/Campaign" } } }
+  /campaigns/{id}:
+    patch:
+      operationId: updateCampaign
+      summary: Sửa chiến dịch (ngân sách, trạng thái)
+      tags: [MKT]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/UpdateCampaignInput" } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Campaign" } } } }
+  /marketing-reports:
+    get:
+      operationId: getMarketingReports
+      summary: Báo cáo hiệu suất Marketing nhập tay theo ngày/sản phẩm/thị trường (dữ liệu báo cáo, không phải nguồn sự thật)
+      tags: [MKT]
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/MarketingReport" } } } }
+    post:
+      operationId: createMarketingReport
+      summary: Nhập báo cáo Marketing
+      tags: [MKT]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateMarketingReportInput" } } }
+      responses:
+        "201":
+          description: Created
+          content: { application/json: { schema: { $ref: "#/components/schemas/MarketingReport" } } }
+  /marketing-reports/auto:
+    get:
+      operationId: getMarketingReportsAuto
+      summary: >
+        Mới — Báo cáo tự động Marketing, tính real-time (KHÔNG lưu bảng riêng) từ Lead.sourcedBy +
+        Order theo khoảng ngày. Doanh thu map giữa nhân viên Marketing và doanh thu các Lead họ tạo.
+      tags: [MKT]
+      parameters:
+        - name: date
+          in: query
+          required: true
+          schema: { type: string, format: date }
+        - name: toDate
+          in: query
+          required: false
+          description: "Gộp số liệu theo khoảng [date, toDate]. Bỏ trống thì chỉ tính 1 ngày (= date)."
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/MarketingReportAuto" } } } }
+        "400": { description: Thiếu query param 'date' }
+  /customers:
+    get:
+      operationId: getCustomers
+      summary: Lấy danh sách khách hàng (đã chuẩn hoá, tránh trùng lặp)
+      tags: [Sales]
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Customer" } } } }
+    post:
+      operationId: createCustomer
+      summary: Tạo khách hàng mới
+      tags: [Sales]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateCustomerInput" } } }
+      responses:
+        "201":
+          description: Created
+          content: { application/json: { schema: { $ref: "#/components/schemas/Customer" } } }
+  /customers/{id}:
+    patch:
+      operationId: updateCustomer
+      summary: Sửa khách hàng (địa chỉ, loại khách, blacklist)
+      tags: [Sales]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/UpdateCustomerInput" } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Customer" } } } }
+  /sale-reports:
+    get:
+      operationId: getSaleReports
+      summary: Báo cáo hiệu suất Sale nhập tay theo ngày/sản phẩm/thị trường
+      tags: [Sales]
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/SaleReport" } } } }
+    post:
+      operationId: createSaleReport
+      summary: "Nhập báo cáo Sale (DEPRECATED từ Phase 3 — FE không còn gọi, xem GET /sale-reports/auto). Giữ lại chỉ để không breaking, không xoá dữ liệu lịch sử."
+      deprecated: true
+      tags: [Sales]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateSaleReportInput" } } }
+      responses:
+        "201":
+          description: Created
+          content: { application/json: { schema: { $ref: "#/components/schemas/SaleReport" } } }
+  /sale-reports/auto:
+    get:
+      operationId: getSaleReportsAuto
+      summary: >
+        Mới (Phase 3) — Báo cáo hiệu suất Sale tự động, tính real-time (KHÔNG lưu bảng riêng) từ
+        Lead/LeadLog/Order/OrderItem/Customer theo ngày. Thay thế luồng nhập tay POST /sale-reports.
+      tags: [Sales]
+      parameters:
+        - name: date
+          in: query
+          required: true
+          schema: { type: string, format: date }
+        - name: toDate
+          in: query
+          required: false
+          description: "Mới — gộp số liệu theo khoảng [date, toDate]. Bỏ trống thì chỉ tính 1 ngày (= date)."
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/SaleReportAuto" } } } }
+  /shipments:
+    get:
+      operationId: getShipments
+      summary: Quản lý vận đơn
+      tags: [Logistics]
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Shipment" } } } }
+    post:
+      operationId: createShipment
+      summary: Đẩy đơn sang vận hành, tạo vận đơn
+      tags: [Logistics]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateShipmentInput" } } }
+      responses:
+        "201":
+          description: Created
+          content: { application/json: { schema: { $ref: "#/components/schemas/Shipment" } } }
+  /shipments/{id}:
+    patch:
+      operationId: updateShipment
+      summary: Cập nhật trạng thái giao hàng/tracking (nguyên tắc #3 — không tracking thì không set delivered)
+      tags: [Logistics]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/UpdateShipmentInput" } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Shipment" } } } }
+        "400": { description: "Không có trackingCode nhưng cố set status=delivered" }
+  /shipments/{id}/tracking-logs:
+    get:
+      operationId: getTrackingLogs
+      summary: Lịch sử cập nhật trạng thái vận đơn (chỉ đọc, tự sinh khi PATCH /shipments/{id})
+      tags: [Logistics]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/TrackingLog" } } } }
+  /warehouses:
+    get:
+      operationId: getWarehouses
+      summary: Danh sách kho
+      tags: [Logistics]
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Warehouse" } } } }
+    post:
+      operationId: createWarehouse
+      summary: Tạo kho mới
+      tags: [Logistics]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateWarehouseInput" } } }
+      responses:
+        "201":
+          description: Created
+          content: { application/json: { schema: { $ref: "#/components/schemas/Warehouse" } } }
+  /inventory-transactions:
+    get:
+      operationId: getInventoryTransactions
+      summary: Lịch sử nhập/xuất/điều chỉnh kho (Inventory Log)
+      tags: [Logistics]
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/InventoryTransaction" } } } }
+    post:
+      operationId: createInventoryTransaction
+      summary: Ghi nhận nhập/xuất/điều chỉnh kho (điều chỉnh bắt buộc có reason, theo nguyên tắc #5)
+      tags: [Logistics]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateInventoryTransactionInput" } } }
+      responses:
+        "201":
+          description: "Created — tự động cập nhật Inventory tương ứng"
+          content: { application/json: { schema: { $ref: "#/components/schemas/InventoryTransaction" } } }
+        "409": { description: "Xuất kho vượt tồn khả dụng (tồn thực - đơn giữ chỗ)" }
+  /inventory-batches:
+    get:
+      operationId: getInventoryBatches
+      summary: Danh sách lô hàng (phục vụ tính giá vốn trung bình) — chỉ đọc, sinh tự động khi có InventoryTransaction loại receipt
+      tags: [Logistics]
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/InventoryBatch" } } } }
+  /cskh-logs:
+    get:
+      operationId: getCskhLogs
+      summary: Lịch sử chăm sóc khách hàng
+      tags: [CSKH]
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/CskhLog" } } } }
+    post:
+      operationId: createCskhLog
+      summary: Ghi nhận cuộc gọi/chăm sóc khách hàng (gọi lại, upsell/cross-sell)
+      tags: [CSKH]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateCskhLogInput" } } }
+      responses:
+        "201":
+          description: Created
+          content: { application/json: { schema: { $ref: "#/components/schemas/CskhLog" } } }
+  /products:
+    get:
+      operationId: getProducts
+      summary: Danh mục sản phẩm (nguồn dropdown dùng chung toàn hệ thống, theo nguyên tắc #2) — mọi tài khoản đã đăng nhập đều xem được, không cần quyền theo module
+      tags: [Catalog]
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Product" } } } }
+    post:
+      operationId: createProduct
+      summary: Tạo sản phẩm mới
+      tags: [Catalog]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateProductInput" } } }
+      responses:
+        "201":
+          description: Created
+          content: { application/json: { schema: { $ref: "#/components/schemas/Product" } } }
+  /products/{id}:
+    patch:
+      operationId: updateProduct
+      summary: Sửa sản phẩm (giá, danh mục)
+      tags: [Catalog]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/UpdateProductInput" } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Product" } } } }
+  /product-performance:
+    get:
+      operationId: getProductPerformance
+      summary: Hiệu quả test sản phẩm R&D (win/fail)
+      tags: [R&D]
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/ProductPerformance" } } } }
+    post:
+      operationId: createProductPerformance
+      summary: Ghi nhận kết quả test sản phẩm 1 giai đoạn
+      tags: [R&D]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateProductPerformanceInput" } } }
+      responses:
+        "201":
+          description: Created
+          content: { application/json: { schema: { $ref: "#/components/schemas/ProductPerformance" } } }
+  /feedbacks:
+    get:
+      operationId: getFeedbacks
+      summary: Phản hồi khách hàng (tổng hợp từ MKT/Sale/CSKH cho R&D)
+      tags: [R&D]
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Feedback" } } } }
+    post:
+      operationId: createFeedback
+      summary: Ghi nhận phản hồi khách hàng
+      tags: [R&D]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateFeedbackInput" } } }
+      responses:
+        "201":
+          description: Created
+          content: { application/json: { schema: { $ref: "#/components/schemas/Feedback" } } }
+  /payments:
+    get:
+      operationId: getPayments
+      summary: Thu tiền theo hợp đồng, đối soát bill
+      tags: [Finance]
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Payment" } } } }
+    post:
+      operationId: createPayment
+      summary: Ghi nhận khoản thu cho 1 hợp đồng
+      tags: [Finance]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreatePaymentInput" } } }
+      responses:
+        "201":
+          description: Created
+          content: { application/json: { schema: { $ref: "#/components/schemas/Payment" } } }
+  /payments/{id}:
+    patch:
+      operationId: updatePayment
+      summary: Cập nhật trạng thái/đối soát khoản thu (không có bill thì không được set completed, theo nguyên tắc #3)
+      tags: [Finance]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/UpdatePaymentInput" } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Payment" } } } }
+  /cash-accounts:
+    get:
+      operationId: getCashAccounts
+      summary: Danh mục mã tài khoản Thu/Chi (Admin khai báo, dropdown dùng chung — nguyên tắc #2)
+      tags: [Finance]
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/CashAccount" } } } }
+    post:
+      operationId: createCashAccount
+      summary: Tạo mã tài khoản Thu/Chi mới
+      tags: [Finance]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateCashAccountInput" } } }
+      responses:
+        "201":
+          description: Created
+          content: { application/json: { schema: { $ref: "#/components/schemas/CashAccount" } } }
+  /cash-transactions:
+    get:
+      operationId: getCashTransactions
+      summary: Sổ quỹ — dòng Thu/Chi (gộp 2 bảng "Quản lý Thu" + "Quản lý Chi" của tài liệu nguồn thành 1 resource, phân biệt qua field `type`)
+      tags: [Finance]
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/CashTransaction" } } } }
+    post:
+      operationId: createCashTransaction
+      summary: Ghi nhận dòng Thu hoặc Chi mới
+      tags: [Finance]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateCashTransactionInput" } } }
+      responses:
+        "201":
+          description: Created
+          content: { application/json: { schema: { $ref: "#/components/schemas/CashTransaction" } } }
+  /employees:
+    get:
+      operationId: getEmployees
+      summary: Hồ sơ nhân sự (nghiệp vụ — khác Account đăng nhập, xem implementation_plan.md)
+      tags: [HR]
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/Employee" } } } }
+    post:
+      operationId: createEmployee
+      summary: Tạo hồ sơ nhân sự mới
+      tags: [HR]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateEmployeeInput" } } }
+      responses:
+        "201":
+          description: Created
+          content: { application/json: { schema: { $ref: "#/components/schemas/Employee" } } }
+  /employees/{id}:
+    patch:
+      operationId: updateEmployee
+      summary: Sửa hồ sơ nhân sự (team, branch, role, trạng thái, liên kết Account)
+      tags: [HR]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/UpdateEmployeeInput" } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Employee" } } } }
+  /kpis:
+    get:
+      operationId: getKPIs
+      summary: Chỉ số hiệu suất nhân sự theo kỳ
+      tags: [HR]
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/KPI" } } } }
+    post:
+      operationId: createKPI
+      summary: Ghi nhận KPI 1 kỳ cho nhân sự
+      tags: [HR]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CreateKPIInput" } } }
+      responses:
+        "201":
+          description: Created
+          content: { application/json: { schema: { $ref: "#/components/schemas/KPI" } } }
+  /system-configs:
+    get:
+      operationId: getSystemConfigs
+      summary: Cấu hình hệ thống (tỷ giá, ngưỡng cảnh báo, thị trường trọng điểm...)
+      tags: [Admin]
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/SystemConfig" } } } }
+  /system-configs/{key}:
+    patch:
+      operationId: updateSystemConfig
+      summary: Sửa giá trị 1 cấu hình hệ thống theo key
+      tags: [Admin]
+      parameters: [{ name: key, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/UpdateSystemConfigInput" } } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/SystemConfig" } } } }
+  /audit-logs:
+    get:
+      operationId: getAuditLogs
+      summary: Nhật ký thay đổi dữ liệu toàn hệ thống (chỉ đọc, chỉ admin — nguyên tắc #5, truy vết ai/sửa gì/khi nào)
+      tags: [Admin]
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/AuditLog" } } } }
+  /dashboard/overview:
+    get:
+      operationId: getDashboardOverview
+      summary: >
+        Mới — Dashboard Tổng Quan, chỉ admin xem được (module "dashboard" không có trong ma trận
+        quyền quản lý được ở AccountsPage, cùng cách "audit-logs" đang làm). Tổng hợp real-time
+        biến động Doanh thu/Chi phí/Lợi nhuận, doanh thu theo Sale, doanh thu Marketing gắn Lead,
+        số lượng+trạng thái Lead/Hợp đồng/CSKH, và Thu-Chi, theo 5 kỳ gần nhất (Ngày/Tuần/Tháng).
+      tags: [Admin]
+      parameters:
+        - name: period
+          in: query
+          required: false
+          description: "Loại kỳ để gộp số liệu — mặc định 'month' nếu không truyền"
+          schema: { type: string, enum: [day, week, month], default: month }
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/DashboardOverview" } } }
+
+components:
+  schemas:
+    # ============================================================
+    # Phase 1 — ĐÃ BUILD/TEST/SHIP THẬT, giữ nguyên không đổi.
+    # ============================================================
+    HealthCheckResponse:
+      type: object
+      required: [status, timestamp]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        timestamp:
+          type: string
+          format: date-time
+    Lead:
+      type: object
+      required: [id, name, phone, source, status, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+          nullable: true
+          description: >
+            Mới (Phase 3) — Mã Lead 4 ký tự [A-Z0-9], server-generated lúc tạo (client không truyền
+            được qua CreateLeadInput). Nullable vì Lead tạo trước Phase 3 chưa có, cần backfill.
+        name:
+          type: string
+          description: Tên khách hàng tiềm năng
+        phone:
+          type: string
+          description: Số điện thoại liên hệ
+        source:
+          type: string
+          description: Nguồn lead (ví dụ Pancake, Facebook Ads, giới thiệu...)
+        productInterest:
+          type: string
+          nullable: true
+          description: "Mới (Phase 3) — Sản phẩm khách hàng quan tâm"
+        threadId:
+          type: string
+          nullable: true
+          description: "Mới (Phase 3) — Mã hội thoại Pancake/Zalo/Messenger (Thread ID)"
+        status:
+          type: string
+          description: Trạng thái xử lý lead trong phễu CRM
+          enum: [new, contacted, qualified, converted, lost]
+        assignedTo:
+          type: string
+          format: uuid
+          nullable: true
+          description: >
+            Sale phụ trách lead này, tham chiếu Employee. Mới (Phase 3): tự động gán round-robin
+            theo Employee(role=Sale, status=active) lúc POST /leads nếu không truyền.
+        sourcedBy:
+          type: string
+          format: uuid
+          nullable: true
+          description: >
+            Mới — Nhân viên Marketing tạo/nguồn lead này, tham chiếu Employee(role=MKT). Tự động
+            gán round-robin theo Employee(role=MKT, status=active) lúc POST /leads, dùng để tính
+            Dashboard doanh thu Marketing gắn với Lead.
+        score:
+          type: number
+          nullable: true
+          description: "Mới (Phase 2) — điểm đánh giá lead"
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CreateLeadInput:
+      type: object
+      required: [name, phone, source]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        phone:
+          type: string
+          minLength: 1
+        source:
+          type: string
+          minLength: 1
+        productInterest:
+          type: string
+          description: "Mới (Phase 3) — Sản phẩm khách hàng quan tâm"
+        threadId:
+          type: string
+          description: "Mới (Phase 3) — Mã hội thoại Pancake/Zalo/Messenger (Thread ID)"
+        sourcedBy:
+          type: string
+          format: uuid
+          description: "Mới — chọn tay nhân viên Marketing (Employee role=MKT), bỏ trống thì tự động round-robin"
+    UpdateLeadInput:
+      type: object
+      description: Mới (Phase 2)
+      properties:
+        status: { type: string, enum: [new, contacted, qualified, converted, lost] }
+        assignedTo: { type: string, format: uuid, nullable: true }
+        note: { type: string, description: "Ghi vào LeadLog cùng lần đổi trạng thái/assignedTo này" }
+    LeadLog:
+      type: object
+      description: >
+        Mới (Phase 2), mở rộng (Phase 3) — append-only, tự sinh khi PATCH /leads/{id} đổi status
+        VÀ/HOẶC đổi assignedTo (trước Phase 3 chỉ ghi khi đổi status).
+      required: [id, leadId, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        leadId: { type: string, format: uuid }
+        fromStatus: { type: string, nullable: true }
+        toStatus: { type: string, nullable: true, description: "Mới (Phase 3): nullable — null khi log này chỉ ghi đổi assignedTo, không đổi status" }
+        fieldChanged: { type: string, nullable: true, description: "Mới (Phase 3): 'status' | 'assignedTo'" }
+        oldValue: { type: string, nullable: true, description: "Mới (Phase 3) — dùng khi fieldChanged=assignedTo (employeeId cũ)" }
+        newValue: { type: string, nullable: true, description: "Mới (Phase 3) — dùng khi fieldChanged=assignedTo (employeeId mới)" }
+        note: { type: string, nullable: true }
+        changedBy: { type: string, format: uuid, nullable: true }
+        createdAt: { type: string, format: date-time }
+    Order:
+      type: object
+      required: [id, customerId, totalAmount, status, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        customerId:
+          type: string
+          description: ID khách hàng đặt đơn — tham chiếu Customer (xem /customers, mới ở Phase 2)
+        customerName:
+          type: string
+          nullable: true
+          description: "Mới — sao chép từ Customer.name tại thời điểm GET /orders, để FE hiển thị được kể cả khi tài khoản không có quyền GET /customers"
+        leadId:
+          type: string
+          format: uuid
+          nullable: true
+          description: "Mới (Phase 3) — Lead phát sinh đơn này (nếu có), tham chiếu lỏng Lead.id"
+        leadCode:
+          type: string
+          nullable: true
+          description: "Mới — sao chép từ Lead.code tại thời điểm GET /orders, dùng để thống kê doanh thu theo Lead"
+        assignedTo:
+          type: string
+          format: uuid
+          nullable: true
+          description: "Mới (Phase 3) — Sale phụ trách đơn này, tham chiếu Employee"
+        assignedToName:
+          type: string
+          nullable: true
+          description: "Mới — sao chép từ Employee.name tại thời điểm GET /orders, để FE hiển thị được kể cả khi tài khoản không có quyền GET /employees"
+        shippingAddress: { type: string, nullable: true, description: "Mới (Phase 3) — Địa chỉ nhận hàng" }
+        shippingPhone: { type: string, nullable: true, description: "Mới (Phase 3) — SĐT nhận hàng" }
+        note: { type: string, nullable: true, description: "Mới (Phase 3) — Ghi chú hợp đồng" }
+        totalAmount:
+          type: number
+          format: double
+          description: Tổng giá trị hợp đồng (VNĐ)
+        status:
+          type: string
+          description: Trạng thái xử lý hợp đồng
+          enum: [pending, confirmed, shipped, delivered, cancelled]
+        items:
+          type: array
+          description: "Mới (Phase 3) — nhúng kèm trong response GET /orders để hiển thị đủ cột Sản phẩm/Số lượng/Giá bán/%KM"
+          items: { $ref: "#/components/schemas/OrderItem" }
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CreateOrderInput:
+      type: object
+      required: [totalAmount]
+      description: >
+        Mới (Phase 3): customerId trở thành optional (giữ tương thích ngược) — cách tạo đơn khuyến
+        nghị là truyền customerName + shippingPhone (+ shippingAddress) để Service tự upsert Customer,
+        cùng thông tin sản phẩm để tạo kèm 1 OrderItem đầu tiên.
+      properties:
+        customerId:
+          type: string
+          minLength: 1
+          description: "Cũ (Phase 1) — vẫn nhận, nhưng ưu tiên dùng customerName/shippingPhone bên dưới"
+        leadId: { type: string, format: uuid, description: "Mới (Phase 3) — chỉ nhận Lead có status=converted và assignedTo=chính Sale đang tạo đơn" }
+        assignedTo: { type: string, format: uuid, description: "Mới (Phase 3) — Sale phụ trách; mặc định = chính tài khoản Sale đang gọi API nếu không truyền" }
+        customerName: { type: string, minLength: 1, description: "Mới (Phase 3) — dùng để upsert Customer theo shippingPhone" }
+        shippingAddress: { type: string, description: "Mới (Phase 3)" }
+        shippingPhone: { type: string, description: "Mới (Phase 3) — khoá upsert Customer (Customer.phone unique)" }
+        note: { type: string, description: "Mới (Phase 3)" }
+        productId: { type: string, format: uuid, description: "Mới (Phase 3) — tạo kèm 1 OrderItem đầu tiên" }
+        productName: { type: string, description: "Mới (Phase 3)" }
+        unit: { type: string, description: "Đơn vị tính — sao chép từ Product đã chọn" }
+        quantity: { type: integer, minimum: 1, description: "Mới (Phase 3)" }
+        unitPrice: { type: number, minimum: 0, description: "Mới (Phase 3)" }
+        discountPercent: { type: number, minimum: 0, maximum: 100, description: "Mới (Phase 3) — % Khuyến mại" }
+        totalAmount:
+          type: number
+          format: double
+          minimum: 0
+          exclusiveMinimum: true
+          description: "Thành tiền — FE tự tính quantity*unitPrice*(1-discountPercent/100), Service không tính lại"
+    UpdateOrderInput:
+      type: object
+      description: Mới (Phase 2) — chặn sửa khi status hiện tại đã là delivered/cancelled (nguyên tắc #6)
+      properties:
+        status: { type: string, enum: [pending, confirmed, shipped, delivered, cancelled] }
+    OrderItem:
+      type: object
+      description: Mới (Phase 2) — giải quyết bài toán gói combo nhiều sản phẩm + quà tặng
+      required: [id, orderId, productId, productName, quantity, unitPrice, isGift, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        orderId: { type: string, format: uuid }
+        productId: { type: string, format: uuid }
+        productName: { type: string }
+        unit: { type: string, nullable: true, description: "Đơn vị tính — sao chép từ Product tại thời điểm tạo đơn" }
+        quantity: { type: integer, minimum: 1 }
+        unitPrice: { type: number, minimum: 0 }
+        discountPercent: { type: number, nullable: true, minimum: 0, maximum: 100, description: "Mới (Phase 3) — % Khuyến mại" }
+        isGift: { type: boolean, default: false }
+        createdAt: { type: string, format: date-time }
+    CreateOrderItemInput:
+      type: object
+      required: [productId, productName, quantity, unitPrice]
+      properties:
+        productId: { type: string, format: uuid }
+        productName: { type: string, minLength: 1 }
+        unit: { type: string, description: "Đơn vị tính — sao chép từ Product đã chọn" }
+        quantity: { type: integer, minimum: 1 }
+        unitPrice: { type: number, minimum: 0 }
+        discountPercent: { type: number, minimum: 0, maximum: 100, description: "Mới (Phase 3)" }
+        isGift: { type: boolean, default: false }
+    Inventory:
+      type: object
+      required: [id, productId, quantity, warehouse, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        productId:
+          type: string
+          description: ID sản phẩm — tham chiếu Product (xem /products, mới ở Phase 2)
+        quantity:
+          type: integer
+          minimum: 0
+        warehouse:
+          type: string
+          description: Tên/mã kho chứa lô hàng
+        updatedAt:
+          type: string
+          format: date-time
+    LoginInput:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string, minLength: 1 }
+        password: { type: string, minLength: 1 }
+    AuthSession:
+      type: object
+      required: [accessToken, account]
+      properties:
+        accessToken: { type: string }
+        account: { $ref: "#/components/schemas/AccountProfile" }
+    ChangePasswordInput:
+      type: object
+      required: [oldPassword, newPassword]
+      properties:
+        oldPassword: { type: string, minLength: 1 }
+        newPassword: { type: string, minLength: 6 }
+    AccountProfile:
+      type: object
+      required: [id, username, isAdmin, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        isAdmin: { type: boolean }
+        employeeName:
+          type: string
+          nullable: true
+          description: >
+            Mới (Phase 3) — tên nhân viên liên kết (join ngược Employee.accountId=Account.id),
+            phái sinh lúc trả response, KHÔNG lưu trên bảng Account. Null nếu tài khoản chưa được
+            liên kết tới Employee nào (ví dụ các tài khoản module mặc định seed sẵn).
+        createdAt: { type: string, format: date-time }
+        permissions:
+          type: array
+          items: { $ref: "#/components/schemas/Permission" }
+    CreateAccountInput:
+      type: object
+      required: [username]
+      properties:
+        username: { type: string, minLength: 1 }
+        password: { type: string, minLength: 6, description: "Bỏ trống để dùng mật khẩu mặc định abc123" }
+    UpdateAccountInput:
+      type: object
+      properties:
+        username: { type: string, minLength: 1 }
+        resetPassword: { type: boolean, description: "true = đặt lại mật khẩu về mặc định abc123" }
+        newPassword: { type: string, minLength: 6, description: "Đặt mật khẩu tuỳ ý, ưu tiên hơn resetPassword nếu gửi cả hai" }
+    Permission:
+      type: object
+      required: [module, canView, canEdit, canDelete]
+      properties:
+        module: { type: string }
+        canView: { type: boolean }
+        canEdit: { type: boolean }
+        canDelete: { type: boolean }
+    PermissionInput:
+      type: object
+      required: [module, canView, canEdit, canDelete]
+      properties:
+        module: { type: string }
+        canView: { type: boolean }
+        canEdit: { type: boolean }
+        canDelete: { type: boolean }
+
+    # ============================================================
+    # Phase 2 — MỚI, theo MÔ TẢ NGHIỆP VỤ CỤ THỂ.pdf (V3.0)
+    # ============================================================
+    Campaign:
+      type: object
+      required: [id, name, budget, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        budget: { type: number }
+        market: { type: string, nullable: true }
+        product: { type: string, nullable: true }
+        status: { type: string, enum: [active, paused, completed] }
+        createdAt: { type: string, format: date-time }
+    CreateCampaignInput:
+      type: object
+      required: [name, budget]
+      properties:
+        name: { type: string, minLength: 1 }
+        budget: { type: number, minimum: 0 }
+        market: { type: string }
+        product: { type: string }
+    UpdateCampaignInput:
+      type: object
+      properties:
+        name: { type: string, minLength: 1 }
+        budget: { type: number, minimum: 0 }
+        status: { type: string, enum: [active, paused, completed] }
+        market: { type: string }
+        product: { type: string }
+    MarketingReport:
+      type: object
+      description: "Dữ liệu báo cáo (nhập tay định kỳ) — không phải nguồn sự thật, chỉ để đối chiếu (nguyên tắc #4)"
+      required: [id, date, shift, product, market, team, adCost, messageCount, orderCount, revenue, revenueActual, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        campaignId: { type: string, format: uuid, nullable: true }
+        date: { type: string, format: date }
+        shift: { type: string }
+        product: { type: string }
+        market: { type: string }
+        team: { type: string }
+        adCost: { type: number, description: "cpqc — chi phí quảng cáo" }
+        messageCount: { type: integer }
+        orderCount: { type: integer }
+        revenue: { type: number }
+        revenueActual: { type: number }
+        warning: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+    CreateMarketingReportInput:
+      type: object
+      required: [date, shift, product, market, team, adCost, messageCount, orderCount, revenue, revenueActual]
+      properties:
+        campaignId: { type: string, format: uuid }
+        date: { type: string, format: date }
+        shift: { type: string, minLength: 1 }
+        product: { type: string, minLength: 1 }
+        market: { type: string, minLength: 1 }
+        team: { type: string, minLength: 1 }
+        adCost: { type: number, minimum: 0 }
+        messageCount: { type: integer, minimum: 0 }
+        orderCount: { type: integer, minimum: 0 }
+        revenue: { type: number, minimum: 0 }
+        revenueActual: { type: number, minimum: 0 }
+        warning: { type: string }
+    MarketingReportAuto:
+      type: object
+      description: "Mới — tính real-time từ Lead.sourcedBy + Order, không lưu bảng riêng"
+      required: [employeeId, employeeName, leadCount, orderCount, revenue]
+      properties:
+        employeeId: { type: string, format: uuid }
+        employeeName: { type: string }
+        leadCount: { type: integer, description: "Số Lead nhân viên này tạo trong khoảng ngày" }
+        orderCount: { type: integer, description: "Số đơn (đã xác nhận) từ các Lead của nhân viên này, phát sinh trong khoảng ngày" }
+        revenue: { type: number, description: "Tổng doanh thu các đơn đó" }
+    Customer:
+      type: object
+      required: [id, name, phone, customerType, blacklistStatus, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        phone: { type: string, description: "unique — chuẩn hoá khách hàng, tránh trùng lặp" }
+        address: { type: string, nullable: true }
+        city: { type: string, nullable: true }
+        country: { type: string, nullable: true }
+        customerType: { type: string, enum: [new, old] }
+        blacklistStatus: { type: boolean, default: false }
+        createdAt: { type: string, format: date-time }
+    CreateCustomerInput:
+      type: object
+      required: [name, phone]
+      properties:
+        name: { type: string, minLength: 1 }
+        phone: { type: string, minLength: 1 }
+        address: { type: string }
+        city: { type: string }
+        country: { type: string }
+        customerType: { type: string, enum: [new, old], default: new }
+    UpdateCustomerInput:
+      type: object
+      properties:
+        name: { type: string, minLength: 1 }
+        address: { type: string }
+        city: { type: string }
+        country: { type: string }
+        customerType: { type: string, enum: [new, old] }
+        blacklistStatus: { type: boolean }
+    SaleReport:
+      type: object
+      description: "Dữ liệu báo cáo (nhập tay định kỳ) — không phải nguồn sự thật (nguyên tắc #4)"
+      required: [id, employeeId, date, shift, product, market, messageCount, orderCount, revenueActual, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        employeeId: { type: string, format: uuid }
+        date: { type: string, format: date }
+        shift: { type: string }
+        product: { type: string }
+        market: { type: string }
+        messageCount: { type: integer }
+        orderCount: { type: integer }
+        revenueActual: { type: number }
+        orderCancelCount: { type: integer, default: 0 }
+        newCustomerCount: { type: integer, default: 0 }
+        oldCustomerCount: { type: integer, default: 0 }
+        createdAt: { type: string, format: date-time }
+    CreateSaleReportInput:
+      type: object
+      required: [employeeId, date, shift, product, market, messageCount, orderCount, revenueActual]
+      properties:
+        employeeId: { type: string, format: uuid }
+        date: { type: string, format: date }
+        shift: { type: string, minLength: 1 }
+        product: { type: string, minLength: 1 }
+        market: { type: string, minLength: 1 }
+        messageCount: { type: integer, minimum: 0 }
+        orderCount: { type: integer, minimum: 0 }
+        revenueActual: { type: number, minimum: 0 }
+        orderCancelCount: { type: integer, minimum: 0, default: 0 }
+        newCustomerCount: { type: integer, minimum: 0, default: 0 }
+        oldCustomerCount: { type: integer, minimum: 0, default: 0 }
+    SaleReportAuto:
+      type: object
+      description: >
+        Mới (Phase 3) — read-model tính real-time từ Lead/LeadLog/Order/OrderItem/Customer, KHÔNG
+        lưu bảng riêng. Xem công thức từng field ở docs/implementation_plan.md mục
+        "Công thức tính SaleReportAuto".
+      required:
+        [
+          date, employeeId, employeeName, newLeadsAssigned, leadsToContacted, leadsToQualified,
+          leadsToConverted, leadsToLost, orderCount, productsSold, revenueTotal, revenueConfirmed,
+          newCustomers, returningCustomers,
+        ]
+      properties:
+        date: { type: string, format: date }
+        employeeId: { type: string, format: uuid }
+        employeeName: { type: string }
+        newLeadsAssigned: { type: integer }
+        leadsToContacted: { type: integer }
+        leadsToQualified: { type: integer }
+        leadsToConverted: { type: integer }
+        leadsToLost: { type: integer }
+        orderCount: { type: integer }
+        productsSold: { type: integer }
+        revenueTotal: { type: number }
+        revenueConfirmed: { type: number, description: "Doanh số Order có status IN (confirmed, shipped, delivered)" }
+        newCustomers: { type: integer }
+        returningCustomers: { type: integer }
+    Shipment:
+      type: object
+      required: [id, orderId, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        orderId: { type: string, format: uuid }
+        trackingCode: { type: string, nullable: true }
+        carrier: { type: string, nullable: true, description: "Đơn vị vận chuyển" }
+        status: { type: string, enum: [preparing, shipping, delivered, returned] }
+        estimatedDeliveryDate: { type: string, format: date, nullable: true }
+        packedAt: { type: string, format: date-time, nullable: true, description: "ngaydonghang trong tài liệu gốc" }
+        dispatchedAt: { type: string, format: date-time, nullable: true, description: "ngay_chia_van_don trong tài liệu gốc" }
+        shippingFee: { type: number, nullable: true }
+        warehouseFee: { type: number, nullable: true }
+        createdAt: { type: string, format: date-time }
+    CreateShipmentInput:
+      type: object
+      required: [orderId]
+      properties:
+        orderId: { type: string, format: uuid }
+        carrier: { type: string }
+        trackingCode: { type: string }
+    UpdateShipmentInput:
+      type: object
+      properties:
+        trackingCode: { type: string }
+        carrier: { type: string }
+        status: { type: string, enum: [preparing, shipping, delivered, returned] }
+        estimatedDeliveryDate: { type: string, format: date }
+        packedAt: { type: string, format: date-time }
+        dispatchedAt: { type: string, format: date-time }
+        shippingFee: { type: number, minimum: 0 }
+        warehouseFee: { type: number, minimum: 0 }
+    TrackingLog:
+      type: object
+      description: Append-only, tự sinh khi PATCH /shipments/{id}
+      required: [id, shipmentId, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        shipmentId: { type: string, format: uuid }
+        status: { type: string }
+        note: { type: string, nullable: true }
+        recordedBy: { type: string, format: uuid, nullable: true }
+        createdAt: { type: string, format: date-time }
+    Warehouse:
+      type: object
+      required: [id, name, code, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        code: { type: string, description: "unique, vd HN1/HCM1" }
+        location: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+    CreateWarehouseInput:
+      type: object
+      required: [name, code]
+      properties:
+        name: { type: string, minLength: 1 }
+        code: { type: string, minLength: 1 }
+        location: { type: string }
+    InventoryTransaction:
+      type: object
+      description: "Nhập/xuất/điều chỉnh kho — mọi xuất kho phải đi từ đơn OMS (referenceType=order), không cho xuất ngoài hệ thống"
+      required: [id, productId, warehouseId, type, quantity, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        productId: { type: string, format: uuid }
+        warehouseId: { type: string, format: uuid }
+        type: { type: string, enum: [receipt, issue, adjustment] }
+        quantity: { type: number }
+        unitCost: { type: number, nullable: true }
+        referenceType: { type: string, enum: [purchase_order, order, manual], nullable: true }
+        referenceId: { type: string, nullable: true }
+        reason: { type: string, nullable: true, description: "Bắt buộc khi type=adjustment (nguyên tắc #5)" }
+        performedBy: { type: string, format: uuid, nullable: true }
+        createdAt: { type: string, format: date-time }
+    CreateInventoryTransactionInput:
+      type: object
+      required: [productId, warehouseId, type, quantity]
+      properties:
+        productId: { type: string, format: uuid }
+        warehouseId: { type: string, format: uuid }
+        type: { type: string, enum: [receipt, issue, adjustment] }
+        quantity: { type: number }
+        unitCost: { type: number, minimum: 0 }
+        referenceType: { type: string, enum: [purchase_order, order, manual] }
+        referenceId: { type: string }
+        reason: { type: string, description: "Bắt buộc khi type=adjustment" }
+    InventoryBatch:
+      type: object
+      description: Chỉ đọc — sinh tự động khi có InventoryTransaction loại receipt
+      required: [id, productId, warehouseId, quantity, unitCost, receivedAt]
+      properties:
+        id: { type: string, format: uuid }
+        productId: { type: string, format: uuid }
+        warehouseId: { type: string, format: uuid }
+        quantity: { type: number }
+        unitCost: { type: number }
+        receivedAt: { type: string, format: date-time }
+    CskhLog:
+      type: object
+      required: [id, orderId, customerId, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        orderId: { type: string, format: uuid }
+        customerId: { type: string, format: uuid }
+        staffId: { type: string, format: uuid, nullable: true }
+        status: { type: string, description: "vd: called/upsell/cross_sell/no_answer" }
+        note: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+    CreateCskhLogInput:
+      type: object
+      required: [orderId, customerId, status]
+      properties:
+        orderId: { type: string, format: uuid }
+        customerId: { type: string, format: uuid }
+        staffId: { type: string, format: uuid }
+        status: { type: string, minLength: 1 }
+        note: { type: string }
+    Product:
+      type: object
+      required: [id, name, sku, unit, price, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        sku: { type: string, description: unique }
+        unit: { type: string, enum: [m2, m, thanh, tấm, cái, thùng, kg, lô, chuyến, gói], description: "Đơn vị tính" }
+        price: { type: number }
+        category: { type: string, nullable: true, description: "vd: san-go, san-nhua, phu-kien" }
+        createdAt: { type: string, format: date-time }
+    CreateProductInput:
+      type: object
+      required: [name, sku, unit, price]
+      properties:
+        name: { type: string, minLength: 1 }
+        sku: { type: string, minLength: 1 }
+        unit: { type: string, enum: [m2, m, thanh, tấm, cái, thùng, kg, lô, chuyến, gói] }
+        price: { type: number, minimum: 0 }
+        category: { type: string }
+    UpdateProductInput:
+      type: object
+      properties:
+        name: { type: string, minLength: 1 }
+        unit: { type: string, enum: [m2, m, thanh, tấm, cái, thùng, kg, lô, chuyến, gói] }
+        price: { type: number, minimum: 0 }
+        category: { type: string }
+    ProductPerformance:
+      type: object
+      required: [id, productId, stage, evaluation, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        productId: { type: string, format: uuid }
+        stage: { type: string, description: "Giai đoạn test, vd GĐ1" }
+        messageCount: { type: integer, nullable: true }
+        adCost: { type: number, nullable: true }
+        orderCount: { type: integer, nullable: true }
+        revenue: { type: number, nullable: true }
+        adCostRatio: { type: number, nullable: true, description: "TL CP Ads" }
+        conversionRate: { type: number, nullable: true, description: "Tỷ lệ chốt" }
+        paymentRate: { type: number, nullable: true, description: "TL thu tiền" }
+        evaluation: { type: string, enum: [win, fail, pending] }
+        createdAt: { type: string, format: date-time }
+    CreateProductPerformanceInput:
+      type: object
+      required: [productId, stage, evaluation]
+      properties:
+        productId: { type: string, format: uuid }
+        stage: { type: string, minLength: 1 }
+        messageCount: { type: integer, minimum: 0 }
+        adCost: { type: number, minimum: 0 }
+        orderCount: { type: integer, minimum: 0 }
+        revenue: { type: number, minimum: 0 }
+        adCostRatio: { type: number }
+        conversionRate: { type: number }
+        paymentRate: { type: number }
+        evaluation: { type: string, enum: [win, fail, pending] }
+    Feedback:
+      type: object
+      required: [id, customerId, source, content, rating, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        customerId: { type: string, format: uuid }
+        orderId: { type: string, format: uuid, nullable: true }
+        source: { type: string, enum: [MKT, Sale, CSKH] }
+        content: { type: string }
+        rating: { type: integer, minimum: 1, maximum: 5 }
+        createdAt: { type: string, format: date-time }
+    CreateFeedbackInput:
+      type: object
+      required: [customerId, source, content, rating]
+      properties:
+        customerId: { type: string, format: uuid }
+        orderId: { type: string, format: uuid }
+        source: { type: string, enum: [MKT, Sale, CSKH] }
+        content: { type: string, minLength: 1 }
+        rating: { type: integer, minimum: 1, maximum: 5 }
+    Payment:
+      type: object
+      required: [id, orderId, amount, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        orderId: { type: string, format: uuid }
+        amount: { type: number }
+        status: { type: string, enum: [pending, completed, failed] }
+        method: { type: string, nullable: true, description: "vd MoneyGram, chuyển khoản" }
+        feeBreakdown:
+          type: object
+          nullable: true
+          additionalProperties: { type: number }
+          description: "Object tự do cho các loại phụ phí (flight_fee, account_rental_fee...) — xem Quyết định thiết kế"
+        reconciledAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+    CreatePaymentInput:
+      type: object
+      required: [orderId, amount]
+      properties:
+        orderId: { type: string, format: uuid }
+        amount: { type: number, minimum: 0 }
+        method: { type: string }
+    UpdatePaymentInput:
+      type: object
+      description: "status=completed yêu cầu đã có bill (enforce ở Service, không chỉ DTO — nguyên tắc #3)"
+      properties:
+        status: { type: string, enum: [pending, completed, failed] }
+        feeBreakdown:
+          type: object
+          additionalProperties: { type: number }
+        reconciledAt: { type: string, format: date-time }
+    CashAccount:
+      type: object
+      required: [id, code, name, type, active, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string, description: "unique, vd 1.1US" }
+        name: { type: string }
+        type: { type: string, enum: [income, expense] }
+        branch: { type: string, nullable: true }
+        market: { type: string, nullable: true }
+        active: { type: boolean, default: true }
+        createdAt: { type: string, format: date-time }
+    CreateCashAccountInput:
+      type: object
+      required: [code, name, type]
+      properties:
+        code: { type: string, minLength: 1 }
+        name: { type: string, minLength: 1 }
+        type: { type: string, enum: [income, expense] }
+        branch: { type: string }
+        market: { type: string }
+    CashTransaction:
+      type: object
+      description: "Gộp 'Quản lý Thu' + 'Quản lý Chi' của tài liệu nguồn — xem Quyết định thiết kế"
+      required: [id, cashAccountId, type, content, amount, transactionDate, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        cashAccountId: { type: string, format: uuid }
+        type: { type: string, enum: [income, expense] }
+        branch: { type: string, nullable: true }
+        market: { type: string, nullable: true }
+        content: { type: string }
+        amount: { type: number }
+        source: { type: string, nullable: true, description: "Nguồn thu/chi, vd 'CK về TK Công ty'" }
+        evidenceUrl: { type: string, nullable: true, description: "Link ảnh/chứng từ" }
+        transactionDate: { type: string, format: date }
+        createdAt: { type: string, format: date-time }
+    CreateCashTransactionInput:
+      type: object
+      required: [cashAccountId, type, content, amount, transactionDate]
+      properties:
+        cashAccountId: { type: string, format: uuid }
+        type: { type: string, enum: [income, expense] }
+        branch: { type: string }
+        market: { type: string }
+        content: { type: string, minLength: 1 }
+        amount: { type: number, minimum: 0 }
+        source: { type: string }
+        evidenceUrl: { type: string }
+        transactionDate: { type: string, format: date }
+    Employee:
+      type: object
+      description: "Hồ sơ nhân sự (nghiệp vụ) — khác Account (đăng nhập kỹ thuật), có thể liên kết qua accountId"
+      required: [id, name, email, role, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        email: { type: string, format: email }
+        team: { type: string, nullable: true }
+        branch: { type: string, nullable: true, description: "HN / HCM" }
+        role: { type: string, enum: [MKT, Sale, CS, CSKH, KeToan, Admin] }
+        status: { type: string, enum: [active, inactive] }
+        accountId: { type: string, format: uuid, nullable: true, description: "Liên kết tới Account để đăng nhập, tuỳ chọn" }
+        createdAt: { type: string, format: date-time }
+    CreateEmployeeInput:
+      type: object
+      required: [name, email, role]
+      properties:
+        name: { type: string, minLength: 1 }
+        email: { type: string, format: email }
+        team: { type: string }
+        branch: { type: string }
+        role: { type: string, enum: [MKT, Sale, CS, CSKH, KeToan, Admin] }
+        accountId: { type: string, format: uuid }
+    UpdateEmployeeInput:
+      type: object
+      properties:
+        name: { type: string, minLength: 1 }
+        team: { type: string }
+        branch: { type: string }
+        role: { type: string, enum: [MKT, Sale, CS, CSKH, KeToan, Admin] }
+        status: { type: string, enum: [active, inactive] }
+        accountId: { type: string, format: uuid, nullable: true }
+    KPI:
+      type: object
+      required: [id, employeeId, period, score, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        employeeId: { type: string, format: uuid }
+        period: { type: string, description: "vd 2026-08" }
+        score: { type: number }
+        bonus: { type: number, nullable: true }
+        createdAt: { type: string, format: date-time }
+    CreateKPIInput:
+      type: object
+      required: [employeeId, period, score]
+      properties:
+        employeeId: { type: string, format: uuid }
+        period: { type: string, minLength: 1 }
+        score: { type: number }
+        bonus: { type: number }
+    SystemConfig:
+      type: object
+      required: [id, key, value, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        key: { type: string, description: "unique, vd exchange_rate_usd, low_stock_threshold" }
+        value: { type: string }
+        description: { type: string, nullable: true }
+        updatedAt: { type: string, format: date-time }
+    UpdateSystemConfigInput:
+      type: object
+      required: [value]
+      properties:
+        value: { type: string }
+    AuditLog:
+      type: object
+      description: "Chỉ đọc, tự sinh ở tầng Service khi có thay đổi dữ liệu quan trọng — không có endpoint tạo qua API công khai"
+      required: [id, tableName, recordId, changedBy, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        tableName: { type: string }
+        recordId: { type: string }
+        fieldChanged: { type: string, nullable: true }
+        oldValue: { type: string, nullable: true }
+        newValue: { type: string, nullable: true }
+        changedBy: { type: string, format: uuid, nullable: true }
+        createdAt: { type: string, format: date-time }
+    DashboardEmployeeSeries:
+      type: object
+      required: [employeeName, values]
+      properties:
+        employeeId: { type: string, format: uuid, nullable: true, description: "null cho nhóm gộp 'Khác'" }
+        employeeName: { type: string }
+        values: { type: array, items: { type: number }, description: "Cùng độ dài với DashboardOverview.periods" }
+    DashboardOverview:
+      type: object
+      required: [periods, revenueCostProfit, salesRevenue, marketingRevenue, leadStats, orderStats, cskhStats, cashFlow]
+      properties:
+        periods:
+          type: array
+          items: { type: string }
+          description: "5 nhãn kỳ, thứ tự cũ -> mới"
+        revenueCostProfit:
+          type: array
+          items:
+            type: object
+            required: [period, revenue, cost, profit]
+            properties:
+              period: { type: string }
+              revenue: { type: number }
+              cost: { type: number }
+              profit: { type: number }
+        salesRevenue:
+          type: array
+          items: { $ref: "#/components/schemas/DashboardEmployeeSeries" }
+        marketingRevenue:
+          type: array
+          items: { $ref: "#/components/schemas/DashboardEmployeeSeries" }
+        leadStats:
+          type: array
+          items: { $ref: "#/components/schemas/DashboardPeriodStats" }
+        orderStats:
+          type: array
+          items: { $ref: "#/components/schemas/DashboardPeriodStats" }
+        cskhStats:
+          type: array
+          items: { $ref: "#/components/schemas/DashboardPeriodStats" }
+        cashFlow:
+          type: array
+          items:
+            type: object
+            required: [period, income, expense]
+            properties:
+              period: { type: string }
+              income: { type: number }
+              expense: { type: number }
+    DashboardPeriodStats:
+      type: object
+      required: [period, total, byStatus]
+      properties:
+        period: { type: string }
+        total: { type: integer }
+        byStatus: { type: object, additionalProperties: { type: integer } }
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+security:
+  - bearerAuth: []
