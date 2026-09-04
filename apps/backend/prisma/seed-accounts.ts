@@ -1,8 +1,7 @@
 import "reflect-metadata";
-import { PrismaClient } from "@prisma/client";
 import * as bcrypt from "bcryptjs";
+import { prisma } from "./_seed-client";
 
-const prisma = new PrismaClient();
 const DEFAULT_PASSWORD = "abc123";
 
 // Khớp đúng tên module nghiệp vụ thật dưới apps/backend/src/modules/<module>/.

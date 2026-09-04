@@ -2,11 +2,12 @@
 // Field trong mỗi model khớp 1-1 với docs/api-contract.openapi.yaml.
 
 generator client {
-  provider = "prisma-client-js"
-  // Output riêng cho dự án này — tránh bị ghi đè bởi `prisma generate` của dự án khác
-  // trong cùng monorepo (mọi dự án cùng khai `@prisma/client` nên npm workspaces hoist
-  // về một bản chung ở node_modules gốc theo mặc định).
-  output   = "../node_modules/@prisma/client"
+  provider   = "prisma-client-js"
+  // engineType = "client" → query compiler (WASM/JS), KHÔNG dùng engine Rust.
+  // Bắt buộc để deploy được lên shared hosting cPanel/CloudLinux (CageFS chặn syscall
+  // timer → engine Rust panic "timer has gone away") LẪN VPS.
+  // Xem skills/build/local-dev-environment/SKILL.md § 3.
+  engineType = "client"
 }
 
 datasource db {

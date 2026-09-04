@@ -1,14 +1,14 @@
 import { randomUUID } from "crypto";
 import { INestApplication } from "@nestjs/common";
-import { PrismaClient } from "@prisma/client";
 import * as bcrypt from "bcryptjs";
 import request from "supertest";
 import { createTestApp, signAdminToken } from "./test-app";
+import { createTestPrisma } from "./prisma-test-client";
 
 describe("Auth & Accounts (e2e)", () => {
   let app: INestApplication;
   let adminAuthHeader: string;
-  const prisma = new PrismaClient();
+  const prisma = createTestPrisma();
 
   beforeAll(async () => {
     app = await createTestApp();

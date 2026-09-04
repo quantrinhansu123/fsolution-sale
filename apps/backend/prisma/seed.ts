@@ -1,7 +1,5 @@
 import "reflect-metadata";
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import { prisma } from "./_seed-client";
 
 function pick<T>(arr: T[], i: number): T {
   return arr[i % arr.length];
