@@ -147,7 +147,7 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
       {/* ── Logo & Brand ── */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-blue-100">
         <img
-          src="/logo.png"
+          src={`${import.meta.env.BASE_URL}logo.png`}
           alt="F-Solution logo"
           className="w-7 h-7 object-contain shrink-0 drop-shadow-sm"
         />
@@ -247,7 +247,7 @@ export default function Layout() {
 
           {/* Mobile Brand */}
           <div className="flex items-center gap-2">
-            <img src="/logo.png" alt="F-Solution" className="w-7 h-7 object-contain" />
+            <img src={`${import.meta.env.BASE_URL}logo.png`} alt="F-Solution" className="w-7 h-7 object-contain" />
             <span className="text-sm font-bold text-blue-900">F-Solution</span>
           </div>
         </header>

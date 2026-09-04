@@ -49,7 +49,7 @@ export default function LoginPage() {
 
         {/* Top: Logo */}
         <div className="relative flex items-center gap-3">
-          <img src="/logo.png" alt="F-Solution" className="w-12 h-12 object-contain drop-shadow-lg" />
+          <img src={`${import.meta.env.BASE_URL}logo.png`} alt="F-Solution" className="w-12 h-12 object-contain drop-shadow-lg" />
           <div>
             <p className="text-white font-bold text-lg leading-tight">F-Solution</p>
             <p className="text-blue-200 text-xs">Software Company</p>
@@ -92,7 +92,7 @@ export default function LoginPage() {
         <div className="w-full max-w-sm">
           {/* Mobile logo (chỉ hiện khi ẩn left panel) */}
           <div className="lg:hidden flex items-center gap-3 mb-8">
-            <img src="/logo.png" alt="F-Solution" className="w-9 h-9 object-contain" />
+            <img src={`${import.meta.env.BASE_URL}logo.png`} alt="F-Solution" className="w-9 h-9 object-contain" />
             <div>
               <p className="text-blue-900 font-bold">F-Solution</p>
               <p className="text-blue-400 text-xs">CRM / ERP Platform</p>
