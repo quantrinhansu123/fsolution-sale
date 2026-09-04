@@ -23,13 +23,17 @@ async function main() {
     process.exit(1);
   }
 
-  const url = process.env.DATABASE_URL
+  const raw = process.env.DATABASE_URL;
+  const url = raw
     .replace(/([?&])sslmode=[^&]*/gi, "$1")
     .replace(/[?&]+$/g, "")
     .replace(/\?&/g, "?");
+  // ssl: tắt cho Postgres localhost (portable/dev/test), bật không-verify cho Supabase/VPS.
+  const disableSsl =
+    /[?&]sslmode=disable/i.test(raw) || /@(localhost|127\.0\.0\.1|\[::1\])[:/]/i.test(url);
   const client = new Client({
     connectionString: url,
-    ssl: { rejectUnauthorized: false },
+    ssl: disableSsl ? false : { rejectUnauthorized: false },
   });
   await client.connect();
 
