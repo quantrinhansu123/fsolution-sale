@@ -1,6 +1,5 @@
 {
-  "root": "apps/frontend",
-  "buildCommand": "npm run build",
-  "outputDirectory": "dist",
+  "buildCommand": "npm run build --workspace=@fsolution/frontend",
+  "outputDirectory": "apps/frontend/dist",
   "framework": "vite"
 }
